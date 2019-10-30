@@ -1,22 +1,4 @@
-/*
-This source file is part of KBEngine
-For the latest info, see http://www.kbengine.org/
-
-Copyright (c) 2008-2018 KBEngine.
-
-KBEngine is free software: you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-KBEngine is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
- 
-You should have received a copy of the GNU Lesser General Public License
-along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Copyright 2008-2018 Yolo Technologies, Inc. All Rights Reserved. https://www.comblockengine.com
 
 
 namespace KBEngine { 
@@ -28,9 +10,9 @@ INLINE EntityCall* Entity::cellEntityCall(void) const
 }
 
 //-------------------------------------------------------------------------------------
-INLINE void Entity::cellEntityCall(EntityCall* entitycall)
+INLINE void Entity::cellEntityCall(EntityCall* entityCall)
 {
-	cellEntityCall_ = entitycall;
+	cellEntityCall_ = entityCall;
 }
 
 //-------------------------------------------------------------------------------------
@@ -40,9 +22,9 @@ INLINE EntityCall* Entity::clientEntityCall() const
 }
 
 //-------------------------------------------------------------------------------------
-INLINE void Entity::clientEntityCall(EntityCall* entitycall)
+INLINE void Entity::clientEntityCall(EntityCall* entityCall)
 { 
-	clientEntityCall_ = entitycall; 
+	clientEntityCall_ = entityCall; 
 }
 
 //-------------------------------------------------------------------------------------
@@ -122,21 +104,35 @@ INLINE void Entity::shouldAutoBackup(int8 v)
 }
 
 //-------------------------------------------------------------------------------------
-INLINE void Entity::setDirty(bool dirty)
+INLINE void Entity::setDirty(uint32* digest)
 {
-	isDirty_ = dirty;
+	if (digest)
+	{
+		memcpy((void*)&persistentDigest_[0], (void*)digest, sizeof(persistentDigest_));
+	}
+	else
+	{
+		persistentDigest_[0] = 0;
+		persistentDigest_[1] = 0;
+		persistentDigest_[2] = 0;
+		persistentDigest_[3] = 0;
+		persistentDigest_[4] = 0;
+	}
 }
 
 //-------------------------------------------------------------------------------------
 INLINE bool Entity::isDirty() const
 {
-	return isDirty_;
+	return persistentDigest_[0] == 0 &&
+		persistentDigest_[1] == 0 &&
+		persistentDigest_[2] == 0 &&
+		persistentDigest_[3] == 0 &&
+		persistentDigest_[4] == 0;
 }
 
 //-------------------------------------------------------------------------------------
 INLINE uint16 Entity::dbInterfaceIndex() const
 {
-	
 	return dbInterfaceIndex_;
 }
 

@@ -1,22 +1,4 @@
-/*
-This source file is part of KBEngine
-For the latest info, see http://www.kbengine.org/
-
-Copyright (c) 2008-2018 KBEngine.
-
-KBEngine is free software: you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-KBEngine is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
- 
-You should have received a copy of the GNU Lesser General Public License
-along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Copyright 2008-2018 Yolo Technologies, Inc. All Rights Reserved. https://www.comblockengine.com
 
 
 
@@ -32,11 +14,13 @@ along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
 #include "entitydef/entitydef.h"	
 #include "entitydef/scriptdef_module.h"
 #include "entitydef/entity_macro.h"	
+#include "entitydef/entity_component.h"
 #include "server/script_timers.h"		
 	
 namespace KBEngine{
 
 class EntityCall;
+class EntityComponent;
 class EntityMessagesForwardCellappHandler;
 class BaseMessagesForwardClientHandler;
 
@@ -83,22 +67,22 @@ public:
 	DECLARE_PY_MOTHOD_ARG0(pyDestroyCellEntity);
 	
 	/** 
-		脚本获取entitycall 
+		脚本获取entityCall 
 	*/
 	DECLARE_PY_GET_MOTHOD(pyGetCellEntityCall);
 
 	EntityCall* cellEntityCall(void) const;
 
-	void cellEntityCall(EntityCall* entitycall);
+	void cellEntityCall(EntityCall* entityCall);
 	
 	/** 
-		脚本获取entitycall 
+		脚本获取entityCall 
 	*/
 	DECLARE_PY_GET_MOTHOD(pyGetClientEntityCall);
 
 	EntityCall* clientEntityCall() const;
 
-	void clientEntityCall(EntityCall* entitycall);
+	void clientEntityCall(EntityCall* entityCall);
 
 	/**
 		是否创建过space
@@ -224,23 +208,12 @@ public:
 	void sendToCellapp(Network::Bundle* pBundle);
 	void sendToCellapp(Network::Channel* pChannel, Network::Bundle* pBundle);
 
-	/** 
-		传送
-	*/
-	DECLARE_PY_MOTHOD_ARG1(pyTeleport, PyObject_ptr);
-
 	/**
 		传送回调
 	*/
 	void onTeleportCB(Network::Channel* pChannel, SPACE_ID spaceID, bool fromCellTeleport);  
 	void onTeleportFailure();  
 	void onTeleportSuccess(SPACE_ID spaceID);
-
-	/** 网络接口
-		某个entity请求teleport到这个entity的space上。
-	*/
-	void reqTeleportOther(Network::Channel* pChannel, ENTITY_ID reqTeleportEntityID, 
-		COMPONENT_ID reqTeleportEntityCellAppID, COMPONENT_ID reqTeleportEntityBaseAppID);
 
 	/** 网络接口
 		entity请求迁移到另一个cellapp上的过程开始和结束。
@@ -279,14 +252,14 @@ public:
 	/** 
 		设置实体持久化数据是否已脏，脏了会自动存档 
 	*/
-	INLINE void setDirty(bool dirty = true);
+	INLINE void setDirty(uint32* digest = NULL);
 	INLINE bool isDirty() const;
 	
 protected:
 	/** 
 		定义属性数据被改变了 
 	*/
-	void onDefDataChanged(const PropertyDescription* propertyDescription, 
+	void onDefDataChanged(EntityComponent* pEntityComponent, const PropertyDescription* propertyDescription,
 			PyObject* pyData);
 
 	/**
@@ -295,7 +268,7 @@ protected:
 	void eraseEntityLog();
 
 protected:
-	// 这个entity的客户端entitycall cellapp entitycall
+	// 这个entity的客户端entityCall cellapp entityCall
 	EntityCall*								clientEntityCall_;
 	EntityCall*								cellEntityCall_;
 
@@ -333,8 +306,8 @@ protected:
 	// 等cell1的包到达后执行完毕再执行cell2的包
 	BaseMessagesForwardClientHandler*		pBufferedSendToClientMessages_;
 	
-	// 需要持久化的数据是否变脏，如果没有变脏不需要持久化
-	bool									isDirty_;
+	// 需要持久化的数据是否变脏（内存sha1），如果没有变脏不需要持久化
+	uint32									persistentDigest_[5];
 
 	// 如果这个实体已经写到数据库，那么这个属性就是对应的数据库接口的索引
 	uint16									dbInterfaceIndex_;

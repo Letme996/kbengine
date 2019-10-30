@@ -1,22 +1,4 @@
-/*
-This source file is part of KBEngine
-For the latest info, see http://www.kbengine.org/
-
-Copyright (c) 2008-2018 KBEngine.
-
-KBEngine is free software: you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-KBEngine is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
- 
-You should have received a copy of the GNU Lesser General Public License
-along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Copyright 2008-2018 Yolo Technologies, Inc. All Rights Reserved. https://www.comblockengine.com
 
 
 #include "baseappmgr.h"
@@ -89,6 +71,7 @@ Baseappmgr::Baseappmgr(Network::EventDispatcher& dispatcher,
 	pending_logins_(),
 	baseappsInitProgress_(0.f)
 {
+	KBEngine::Network::MessageHandlers::pMainMessageHandlers = &BaseappmgrInterface::messageHandlers;
 }
 
 //-------------------------------------------------------------------------------------
@@ -127,8 +110,8 @@ void Baseappmgr::handleTimeout(TimerHandle handle, void * arg)
 //-------------------------------------------------------------------------------------
 void Baseappmgr::handleGameTick()
 {
-	 //time_t t = ::time(NULL);
-	 //DEBUG_MSG("Baseappmgr::handleGameTick[%"PRTime"]:%u\n", t, time_);
+	//time_t t = ::time(NULL);
+	//DEBUG_MSG(fmt::format("Baseappmgr::handleGameTick[{}]:{}\n", t, g_kbetime));
 	
 	++g_kbetime;
 	threadPool_.onMainThreadTick();
@@ -167,7 +150,7 @@ void Baseappmgr::onAddComponent(const Components::ComponentInfos* pInfos)
 
 	if(pInfos->componentType == LOGINAPP_TYPE && cinfo->pChannel != NULL)
 	{
-		Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 
 		(*pBundle).newMessage(LoginappInterface::onBaseappInitProgress);
 		(*pBundle) << baseappsInitProgress_;
@@ -224,7 +207,7 @@ void Baseappmgr::forwardMessage(Network::Channel* pChannel, MemoryStream& s)
 		return;
 	}
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle).append((char*)s.data() + s.rpos(), (int)s.length());
 	cinfos->pChannel->send(pBundle);
 	s.done();
@@ -284,6 +267,10 @@ void Baseappmgr::updateBaseapp(Network::Channel* pChannel, COMPONENT_ID componen
 	baseapp.numProxices(numProxices);
 	baseapp.numEntitys(numEntitys);
 	baseapp.flags(flags);
+
+	Components::ComponentInfos* cinfos = Components::getSingleton().findComponent(componentID);
+	if (cinfos)
+		cinfos->appFlags = flags;
 	
 	updateBestBaseapp();
 }
@@ -353,7 +340,7 @@ void Baseappmgr::reqCreateEntityAnywhere(Network::Channel* pChannel, MemoryStrea
 	cinfos = Components::getSingleton().findComponent(BASEAPP_TYPE, bestBaseappID_);
 	if (cinfos == NULL || cinfos->pChannel == NULL || cinfos->state != COMPONENT_STATE_RUN)
 	{
-		Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 		ForwardItem* pFI = new AppForwardItem();
 		pFI->pBundle = pBundle;
 		(*pBundle).newMessage(BaseappInterface::onCreateEntityAnywhere);
@@ -375,7 +362,7 @@ void Baseappmgr::reqCreateEntityAnywhere(Network::Channel* pChannel, MemoryStrea
 	//DEBUG_MSG("Baseappmgr::reqCreateEntityAnywhere: %s opsize=%d, selBaseappIdx=%d.\n", 
 	//	pChannel->c_str(), s.opsize(), currentBaseappIndex);
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle).newMessage(BaseappInterface::onCreateEntityAnywhere);
 
 	(*pBundle).append((char*)s.data() + s.rpos(), (int)s.length());
@@ -408,7 +395,7 @@ void Baseappmgr::reqCreateEntityRemotely(Network::Channel* pChannel, MemoryStrea
 	cinfos = Components::getSingleton().findComponent(BASEAPP_TYPE, createToComponentID);
 	if (cinfos == NULL || cinfos->pChannel == NULL || cinfos->state != COMPONENT_STATE_RUN)
 	{
-		Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 		ForwardItem* pFI = new AppForwardItem();
 		pFI->pBundle = pBundle;
 		(*pBundle).newMessage(BaseappInterface::onCreateEntityRemotely);
@@ -430,7 +417,7 @@ void Baseappmgr::reqCreateEntityRemotely(Network::Channel* pChannel, MemoryStrea
 	//DEBUG_MSG("Baseappmgr::reqCreateEntityRemotely: %s opsize=%d, selBaseappIdx=%d.\n", 
 	//	pChannel->c_str(), s.opsize(), currentBaseappIndex);
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle).newMessage(BaseappInterface::onCreateEntityRemotely);
 
 	(*pBundle).append((char*)s.data() + s.rpos(), (int)s.length());
@@ -465,7 +452,7 @@ void Baseappmgr::reqCreateEntityAnywhereFromDBIDQueryBestBaseappID(Network::Chan
 			baseapps_.size()));
 	}
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle).newMessage(BaseappInterface::onGetCreateEntityAnywhereFromDBIDBestBaseappID);
 
 	(*pBundle) << bestBaseappID_;
@@ -492,7 +479,7 @@ void Baseappmgr::reqCreateEntityAnywhereFromDBID(Network::Channel* pChannel, Mem
 	cinfos = Components::getSingleton().findComponent(BASEAPP_TYPE, targetComponentID);
 	if(cinfos == NULL || cinfos->pChannel == NULL || cinfos->state != COMPONENT_STATE_RUN)
 	{
-		Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 		ForwardItem* pFI = new AppForwardItem();
 		pFI->pBundle = pBundle;
 		(*pBundle).newMessage(BaseappInterface::createEntityAnywhereFromDBIDOtherBaseapp);
@@ -514,7 +501,7 @@ void Baseappmgr::reqCreateEntityAnywhereFromDBID(Network::Channel* pChannel, Mem
 	//DEBUG_MSG("Baseappmgr::reqCreateEntityAnywhereFromDBID: %s opsize=%d, selBaseappIdx=%d.\n", 
 	//	pChannel->c_str(), s.opsize(), currentBaseappIndex);
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle).newMessage(BaseappInterface::createEntityAnywhereFromDBIDOtherBaseapp);
 
 	(*pBundle).append((char*)s.data() + s.rpos(), (int)s.length());
@@ -547,7 +534,7 @@ void Baseappmgr::reqCreateEntityRemotelyFromDBID(Network::Channel* pChannel, Mem
 	cinfos = Components::getSingleton().findComponent(BASEAPP_TYPE, targetComponentID);
 	if (cinfos == NULL || cinfos->pChannel == NULL || cinfos->state != COMPONENT_STATE_RUN)
 	{
-		Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 		ForwardItem* pFI = new AppForwardItem();
 		pFI->pBundle = pBundle;
 		(*pBundle).newMessage(BaseappInterface::createEntityRemotelyFromDBIDOtherBaseapp);
@@ -569,7 +556,7 @@ void Baseappmgr::reqCreateEntityRemotelyFromDBID(Network::Channel* pChannel, Mem
 	//DEBUG_MSG("Baseappmgr::reqCreateEntityRemotelyFromDBID: %s opsize=%d, selBaseappIdx=%d.\n", 
 	//	pChannel->c_str(), s.opsize(), currentBaseappIndex);
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle).newMessage(BaseappInterface::createEntityRemotelyFromDBIDOtherBaseapp);
 
 	(*pBundle).append((char*)s.data() + s.rpos(), (int)s.length());
@@ -594,17 +581,25 @@ void Baseappmgr::registerPendingAccountToBaseapp(Network::Channel* pChannel, Mem
 	DBID entityDBID;
 	uint32 flags;
 	uint64 deadline;
-	COMPONENT_TYPE componentType;
+	int clientType;
 	bool forceInternalLogin;
 	bool needCheckPassword;
 
-	s >> loginName >> accountName >> password >> needCheckPassword >> entityDBID >> flags >> deadline >> componentType >> forceInternalLogin;
+	s >> loginName >> accountName >> password >> needCheckPassword >> entityDBID >> flags >> deadline >> clientType >> forceInternalLogin;
 	s.readBlob(datas);
 
 	Components::ComponentInfos* cinfos = Components::getSingleton().findComponent(pChannel);
 	if(cinfos == NULL || cinfos->pChannel == NULL)
 	{
 		ERROR_MSG("Baseappmgr::registerPendingAccountToBaseapp: not found loginapp!\n");
+		return;
+	}
+
+	if (pending_logins_.find(loginName) != pending_logins_.end())
+	{
+		ERROR_MSG(fmt::format("Baseappmgr::registerPendingAccountToBaseapp: Already registered! accountName={}.\n",
+			loginName));
+
 		return;
 	}
 
@@ -623,12 +618,12 @@ void Baseappmgr::registerPendingAccountToBaseapp(Network::Channel* pChannel, Mem
 
 	if (cinfos == NULL || cinfos->pChannel == NULL || cinfos->state != COMPONENT_STATE_RUN)
 	{
-		Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 		ForwardItem* pFI = new AppForwardItem();
 
 		pFI->pBundle = pBundle;
 		(*pBundle).newMessage(BaseappInterface::registerPendingLogin);
-		(*pBundle) << loginName << accountName << password << needCheckPassword << eid << entityDBID << flags << deadline << componentType << forceInternalLogin;
+		(*pBundle) << loginName << accountName << password << needCheckPassword << eid << entityDBID << flags << deadline << clientType << forceInternalLogin;
 		pBundle->appendBlob(datas);
 
 		int runstate = -1;
@@ -648,9 +643,9 @@ void Baseappmgr::registerPendingAccountToBaseapp(Network::Channel* pChannel, Mem
 	DEBUG_MSG(fmt::format("Baseappmgr::registerPendingAccountToBaseapp:{}. allocBaseapp={}, numEntities={}.\n",
 		accountName, bestBaseappID_, (bestBaseappID_ > 0 ? baseapps_iter->second.numEntities() : 0)));
 	
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle).newMessage(BaseappInterface::registerPendingLogin);
-	(*pBundle) << loginName << accountName << password << needCheckPassword << eid << entityDBID << flags << deadline << componentType << forceInternalLogin;
+	(*pBundle) << loginName << accountName << password << needCheckPassword << eid << entityDBID << flags << deadline << clientType << forceInternalLogin;
 	pBundle->appendBlob(datas);
 	cinfos->pChannel->send(pBundle);
 
@@ -673,11 +668,11 @@ void Baseappmgr::registerPendingAccountToBaseappAddr(Network::Channel* pChannel,
 	DBID entityDBID;
 	uint32 flags;
 	uint64 deadline;
-	COMPONENT_TYPE componentType;
+	int clientType;
 	bool forceInternalLogin;
 	bool needCheckPassword;
 
-	s >> componentID >> loginName >> accountName >> password >> needCheckPassword >> entityID >> entityDBID >> flags >> deadline >> componentType >> forceInternalLogin;
+	s >> componentID >> loginName >> accountName >> password >> needCheckPassword >> entityID >> entityDBID >> flags >> deadline >> clientType >> forceInternalLogin;
 	s.readBlob(datas);
 
 	DEBUG_MSG(fmt::format("Baseappmgr::registerPendingAccountToBaseappAddr:{0}, componentID={1}, entityID={2}.\n",
@@ -690,53 +685,61 @@ void Baseappmgr::registerPendingAccountToBaseappAddr(Network::Channel* pChannel,
 		return;
 	}
 
+	if (pending_logins_.find(loginName) != pending_logins_.end())
+	{
+		ERROR_MSG(fmt::format("Baseappmgr::registerPendingAccountToBaseappAddr: Already registered! accountName={}.\n",
+			loginName));
+
+		return;
+	}
+
 	pending_logins_[loginName] = cinfos->cid;
 
 	cinfos = Components::getSingleton().findComponent(componentID);
 	if(cinfos == NULL || cinfos->pChannel == NULL)
 	{
 		ERROR_MSG(fmt::format("Baseappmgr::registerPendingAccountToBaseappAddr: not found baseapp({}).\n", componentID));
-		sendAllocatedBaseappAddr(pChannel, loginName, accountName, "", 0);
+		sendAllocatedBaseappAddr(pChannel, loginName, accountName, "", 0, 0);
 		return;
 	}
 	
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle).newMessage(BaseappInterface::registerPendingLogin);
-	(*pBundle) << loginName << accountName << password << needCheckPassword << entityID << entityDBID << flags << deadline << componentType << forceInternalLogin;
+	(*pBundle) << loginName << accountName << password << needCheckPassword << entityID << entityDBID << flags << deadline << clientType << forceInternalLogin;
 	pBundle->appendBlob(datas);
 	cinfos->pChannel->send(pBundle);
 }
 
 //-------------------------------------------------------------------------------------
 void Baseappmgr::onPendingAccountGetBaseappAddr(Network::Channel* pChannel, 
-							  std::string& loginName, std::string& accountName, std::string& addr, uint16 port)
+							  std::string& loginName, std::string& accountName, std::string& addr, uint16 tcp_port, uint16 udp_port)
 {
-	sendAllocatedBaseappAddr(pChannel, loginName, accountName, addr, port);
+	sendAllocatedBaseappAddr(pChannel, loginName, accountName, addr, tcp_port, udp_port);
 }
 
 //-------------------------------------------------------------------------------------
 void Baseappmgr::sendAllocatedBaseappAddr(Network::Channel* pChannel, 
-							  std::string& loginName, std::string& accountName, const std::string& addr, uint16 port)
+							  std::string& loginName, std::string& accountName, const std::string& addr, uint16 tcp_port, uint16 udp_port)
 {
 	KBEUnordered_map< std::string, COMPONENT_ID >::iterator iter = pending_logins_.find(loginName);
 	if(iter == pending_logins_.end())
 	{
-		ERROR_MSG("Baseappmgr::sendAllocatedBaseappAddr: not found loginapp, pending_logins is error!\n");
+		ERROR_MSG(fmt::format("Baseappmgr::sendAllocatedBaseappAddr: not found accountName({}), pending_logins error!\n", loginName));
 		return;
 	}
 	
 	Components::ComponentInfos* cinfos = Components::getSingleton().findComponent(iter->second);
 	if(cinfos == NULL || cinfos->pChannel == NULL)
 	{
-		ERROR_MSG("Baseappmgr::sendAllocatedBaseappAddr: not found loginapp!\n");
+		ERROR_MSG(fmt::format("Baseappmgr::sendAllocatedBaseappAddr: not found loginapp! accountName={}\n", loginName));
 		return;
 	}
 
-	Network::Bundle* pBundleToLoginapp = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundleToLoginapp = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundleToLoginapp).newMessage(LoginappInterface::onLoginAccountQueryBaseappAddrFromBaseappmgr);
 
-	LoginappInterface::onLoginAccountQueryBaseappAddrFromBaseappmgrArgs4::staticAddToBundle((*pBundleToLoginapp), loginName, 
-		accountName, addr, port);
+	LoginappInterface::onLoginAccountQueryBaseappAddrFromBaseappmgrArgs5::staticAddToBundle((*pBundleToLoginapp), loginName, 
+		accountName, addr, tcp_port, udp_port);
 
 	cinfos->pChannel->send(pBundleToLoginapp);
 	pending_logins_.erase(iter);
@@ -788,7 +791,7 @@ void Baseappmgr::onBaseappInitProgress(Network::Channel* pChannel, COMPONENT_ID 
 		if((*iter).pChannel == NULL)
 			continue;
 
-		Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 
 		(*pBundle).newMessage(LoginappInterface::onBaseappInitProgress);
 		(*pBundle) << baseappsInitProgress_;
@@ -799,7 +802,7 @@ void Baseappmgr::onBaseappInitProgress(Network::Channel* pChannel, COMPONENT_ID 
 //-------------------------------------------------------------------------------------
 void Baseappmgr::queryAppsLoads(Network::Channel* pChannel, MemoryStream& s)
 {
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	ConsoleInterface::ConsoleQueryAppsLoadsHandler msgHandler;
 	(*pBundle).newMessage(msgHandler);
 
@@ -838,7 +841,7 @@ void Baseappmgr::reqAccountBindEmailAllocCallbackLoginapp(Network::Channel* pCha
 		if ((*iter).pChannel == NULL)
 			continue;
 
-		Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 
 		(*pBundle).newMessage(LoginappInterface::onReqAccountBindEmailAllocCallbackLoginapp);
 
@@ -864,7 +867,7 @@ void Baseappmgr::onReqAccountBindEmailCBFromLoginapp(Network::Channel* pChannel,
 		return;
 	}
 
-	Network::Bundle* pBundleToBaseapp = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundleToBaseapp = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundleToBaseapp).newMessage(BaseappInterface::onReqAccountBindEmailCBFromBaseappmgr);
 
 	BaseappInterface::onReqAccountBindEmailCBFromBaseappmgrArgs7::staticAddToBundle((*pBundleToBaseapp),

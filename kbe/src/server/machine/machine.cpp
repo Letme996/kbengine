@@ -1,22 +1,4 @@
-/*
-This source file is part of KBEngine
-For the latest info, see http://www.kbengine.org/
-
-Copyright (c) 2008-2018 KBEngine.
-
-KBEngine is free software: you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-KBEngine is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
- 
-You should have received a copy of the GNU Lesser General Public License
-along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Copyright 2008-2018 Yolo Technologies, Inc. All Rights Reserved. https://www.comblockengine.com
 
 
 #include "machine.h"
@@ -39,6 +21,7 @@ along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
 #include "../tools/logger/logger_interface.h"
 #include "../../server/tools/interfaces/interfaces_interface.h"
 #include "../../server/tools/bots/bots_interface.h"
+#include "common/md5.h"
 
 namespace KBEngine{
 	
@@ -61,6 +44,7 @@ Machine::Machine(Network::EventDispatcher& dispatcher,
 	localuids_()
 {
 	SystemInfo::getSingleton().getCPUPer();
+	KBEngine::Network::MessageHandlers::pMainMessageHandlers = &MachineInterface::messageHandlers;
 }
 
 //-------------------------------------------------------------------------------------
@@ -91,7 +75,7 @@ void Machine::onBroadcastInterface(Network::Channel* pChannel, int32 uid, std::s
 		if(pinfos->pid != pid || pinfos->pIntAddr->ip != intaddr ||
 			username != pinfos->username || uid != pinfos->uid)
 		{
-			Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+			Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 
 			MachineInterface::onBroadcastInterfaceArgs25::staticAddToBundle((*pBundle), pinfos->uid,
 				pinfos->username, pinfos->componentType, pinfos->cid, componentIDEx, pinfos->globalOrderid, pinfos->groupOrderid, pinfos->gus,
@@ -123,8 +107,8 @@ void Machine::onBroadcastInterface(Network::Channel* pChannel, int32 uid, std::s
 	}
 
 	// 只记录本机启动的进程
-	if(this->networkInterface().intaddr().ip == intaddr ||
-				this->networkInterface().extaddr().ip == intaddr)
+	if(this->networkInterface().intTcpAddr().ip == intaddr ||
+				this->networkInterface().extTcpAddr().ip == intaddr)
 	{
 		pinfos = Components::getSingleton().findComponent((COMPONENT_TYPE)componentType, uid, componentID);
 		if(pinfos)
@@ -211,7 +195,7 @@ void Machine::onFindInterfaceAddr(Network::Channel* pChannel, int32 uid, std::st
 	Components::COMPONENTS::iterator iter = components.begin();
 
 	bool found = false;
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 
 	for(; iter != components.end(); )
 	{
@@ -230,8 +214,8 @@ void Machine::onFindInterfaceAddr(Network::Channel* pChannel, int32 uid, std::st
 
 		if(usable)
 		{
-			if(this->networkInterface().intaddr().ip == pinfos->pIntAddr->ip ||
-				this->networkInterface().extaddr().ip == pinfos->pIntAddr->ip)
+			if(this->networkInterface().intTcpAddr().ip == pinfos->pIntAddr->ip ||
+				this->networkInterface().extTcpAddr().ip == pinfos->pIntAddr->ip)
 			{
 				found = true;
 
@@ -251,6 +235,7 @@ void Machine::onFindInterfaceAddr(Network::Channel* pChannel, int32 uid, std::st
 				pinfos->cid,
 				COMPONENT_NAME_EX(pinfos->componentType)));
 
+			removeComponentID(pinfos->componentType, pinfos->cid, uid);
 			iter = components.erase(iter);
 		}
 	}
@@ -320,7 +305,7 @@ void Machine::onQueryMachines(Network::Channel* pChannel, int32 uid, std::string
 		return;
 	}
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 
 	uint64 cidex = 0;
 	float cpu = SystemInfo::getSingleton().getCPUPer();
@@ -329,8 +314,8 @@ void Machine::onQueryMachines(Network::Channel* pChannel, int32 uid, std::string
 
 	MachineInterface::onBroadcastInterfaceArgs25::staticAddToBundle((*pBundle), getUserUID(), getUsername(),
 		g_componentType, g_componentID, cidex, g_componentGlobalOrder, g_componentGroupOrder, g_genuuid_sections,
-		networkInterface_.intaddr().ip, networkInterface_.intaddr().port,
-		networkInterface_.extaddr().ip, networkInterface_.extaddr().port, "", getProcessPID(),
+		networkInterface_.intTcpAddr().ip, networkInterface_.intTcpAddr().port,
+		networkInterface_.extTcpAddr().ip, networkInterface_.extTcpAddr().port, "", getProcessPID(),
 		cpu, float((totalusedmem * 1.0 / totalmem) * 100.0), (uint32)SystemInfo::getSingleton().getMemUsedByPID(), 0,
 		getProcessPID(), totalmem, totalusedmem, uint64(SystemInfo::getSingleton().getCPUPerByPID() * 100), 0, 0, 0);
 
@@ -342,6 +327,186 @@ void Machine::onQueryMachines(Network::Channel* pChannel, int32 uid, std::string
 	else
 	{
 		pChannel->send(pBundle);
+	}
+}
+
+//-------------------------------------------------------------------------------------
+void Machine::queryComponentID(Network::Channel* pChannel, COMPONENT_TYPE componentType, COMPONENT_ID componentID, 
+	int32 uid, uint16 finderRecvPort, int macMD5, int32 pid)
+{
+	INFO_MSG(fmt::format("Machine::queryComponentID[{}]: component:{}({}) uid:{} finderRecvPort:{} macMD5:{} pid:{}.\n",
+		pChannel->c_str(), COMPONENT_NAME_EX(componentType), componentID, uid, finderRecvPort, macMD5, pid));
+
+	uint32 ip = pChannel->addr().ip;
+	std::string data = std::to_string(ip) + std::to_string(pid) + std::to_string(finderRecvPort);
+	std::string md5 = std::to_string(getMD5(data));
+	std::string pidMD5 = std::to_string(pid) + "-" + md5;
+
+	std::map<std::string, COMPONENT_ID>::iterator pidIter = pidMD5Map_.find(pidMD5);
+	if (pidIter != pidMD5Map_.end())
+	{
+		WARNING_MSG(fmt::format("Machine::queryComponentID[{}]: component({}) process({}) has queried componentID({}).\n", 
+			pChannel->c_str(), COMPONENT_NAME_EX(componentType), pid, pidIter->second));
+
+		return;
+	}
+
+	if (this->networkInterface().intTcpAddr().ip == ip ||
+		this->networkInterface().extTcpAddr().ip == ip)
+	{
+		COMPONENT_ID cid1 = (COMPONENT_ID)uid * COMPONENT_ID_MULTIPLE;
+		COMPONENT_ID cid2 = (COMPONENT_ID)macMD5 * 10000;
+		COMPONENT_ID cid3 = (COMPONENT_ID)componentType * 100;
+
+		COMPONENT_ID cid = cid1 + cid2 + cid3 + 1;
+
+		std::map<int32, CID_MAP>::iterator iter = cidMap_.find(uid);
+		if (iter == cidMap_.end())
+		{
+			ID_LOGS cidLog;
+			cidLog.push_back(cid);
+
+			CID_MAP cidMap;
+			cidMap.insert(std::make_pair(componentType, cidLog));
+			cidMap_.insert(std::make_pair(uid, cidMap));
+		}
+		else
+		{
+			CID_MAP cids = iter->second;
+			CID_MAP::iterator iter1 = cids.find(componentType);
+
+			if (iter1 == cids.end())
+			{
+				ID_LOGS cidLog;
+				cidLog.push_back(cid);
+				cids.insert(std::make_pair(componentType, cidLog));
+			}
+			else
+			{
+				ID_LOGS::iterator idIter;
+				ID_LOGS cidLog = iter1->second;
+
+				for (idIter = cidLog.begin(); idIter != cidLog.end();)
+				{
+					bool found = false;
+
+					std::map<std::string, COMPONENT_ID>::iterator pidIter = pidMD5Map_.begin();
+					for (; pidIter != pidMD5Map_.end(); pidIter++)
+					{
+						if (pidIter->second == *idIter)
+						{
+							std::vector<std::string> vec;
+							strutil::kbe_split(pidIter->first, '-', vec);
+							if (vec.size() == 2)
+							{
+								int32 oldPid = std::stoi(vec[0]);
+								std::string oldMD5 = vec[1];
+								SystemInfo::PROCESS_INFOS sysinfos = SystemInfo::getSingleton().getProcessInfo(oldPid);
+
+								if (sysinfos.error || (pid == oldPid && oldMD5 != md5))
+								{
+									pidMD5Map_.erase(pidIter);
+									idIter = cidLog.erase(idIter);
+									found = true;
+									break;
+								}
+							}
+						}
+					}
+
+					if (!found)
+						idIter++;
+				}
+				
+				while((idIter = std::find(cidLog.begin(), cidLog.end(), cid)) != cidLog.end())
+				{
+					cid += 1;
+				}
+
+				cidLog.push_back(cid);
+				cids[componentType] = cidLog;
+			}
+
+			cidMap_[uid] = cids;
+		}
+
+		Network::EndPoint ep;
+		ep.socket(SOCK_DGRAM);
+
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
+		MachineInterface::queryComponentIDArgs6::staticAddToBundle((*pBundle), componentType, cid, uid, finderRecvPort, macMD5, pid);
+		ep.sendto(pBundle, finderRecvPort, ip);
+		Network::Bundle::reclaimPoolObject(pBundle);
+
+		pidMD5Map_.insert(std::make_pair(pidMD5, cid));
+
+		INFO_MSG(fmt::format("Machine::queryComponentID[{}], set componentID success: component:{}({}) uid:{} pidMD5:{}.\n",
+			pChannel->c_str(), COMPONENT_NAME_EX(componentType), cid, uid, pidMD5));
+	}
+}
+
+//-------------------------------------------------------------------------------------
+void Machine::removeComponentID(COMPONENT_TYPE componentType, COMPONENT_ID componentID, int32 uid)
+{
+	INFO_MSG(fmt::format("Machine::removeComponentID: component={}({}), uid={} \n", 
+		COMPONENT_NAME[componentType], componentID, uid));
+
+	std::map<int32, CID_MAP>::iterator iter = cidMap_.find(uid);
+	if (iter != cidMap_.end())
+	{
+		CID_MAP cids = iter->second;
+		if (cids.size() > 0)
+		{
+			CID_MAP::iterator iter1 = cids.find(componentType);
+			if (iter1 != cids.end())
+			{
+				ID_LOGS cidLogs = iter1->second;
+
+				if (cidLogs.size() > 0)
+				{
+					ID_LOGS::iterator iter2 = cidLogs.begin();
+					for (; iter2 != cidLogs.end(); )
+					{
+						if (*iter2 == componentID)
+						{
+							INFO_MSG(fmt::format("--> remove componentID({})\n", componentID));
+							iter2 = cidLogs.erase(iter2);
+							std::map<std::string, COMPONENT_ID>::iterator pidIter = pidMD5Map_.begin();
+							for (; pidIter != pidMD5Map_.end(); pidIter++)
+							{
+								if (pidIter->second == componentID)
+								{
+									INFO_MSG(fmt::format("--> remove pidMD5({})\n", pidIter->first));
+									pidMD5Map_.erase(pidIter);
+									break;
+								}
+							}
+							break;
+						}
+						else
+						{
+							iter2++;
+						}
+					}
+				}
+
+				cids[componentType] = cidLogs;
+				
+				if (cidLogs.size() == 0)
+				{
+					cids.erase(iter1);
+				}
+			}
+		}
+		
+		if (cids.size() == 0)
+		{
+			cidMap_.erase(iter);
+		}
+		else
+		{
+			cidMap_[uid] = cids;
+		}
 	}
 }
 
@@ -364,7 +529,7 @@ void Machine::onQueryAllInterfaceInfos(Network::Channel* pChannel, int32 uid, st
 	}
 
 	{
-		Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+		Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 		
 		uint64 cidex = 0;
 		float cpu = SystemInfo::getSingleton().getCPUPer();
@@ -373,8 +538,8 @@ void Machine::onQueryAllInterfaceInfos(Network::Channel* pChannel, int32 uid, st
 
 		MachineInterface::onBroadcastInterfaceArgs25::staticAddToBundle((*pBundle), getUserUID(), getUsername(), 
 			g_componentType, g_componentID, cidex, g_componentGlobalOrder, g_componentGroupOrder, g_genuuid_sections,
-			networkInterface_.intaddr().ip, networkInterface_.intaddr().port,
-			networkInterface_.extaddr().ip, networkInterface_.extaddr().port, "", getProcessPID(),
+			networkInterface_.intTcpAddr().ip, networkInterface_.intTcpAddr().port,
+			networkInterface_.extTcpAddr().ip, networkInterface_.extTcpAddr().port, "", getProcessPID(),
 			cpu, float((totalusedmem * 1.0 / totalmem) * 100.0), (uint32)SystemInfo::getSingleton().getMemUsedByPID(), 0, 
 			getProcessPID(), totalmem, totalusedmem, uint64(SystemInfo::getSingleton().getCPUPerByPID() * 100), 0, 0, 0);
 
@@ -415,8 +580,8 @@ void Machine::onQueryAllInterfaceInfos(Network::Channel* pChannel, int32 uid, st
 
 			const Components::ComponentInfos* pinfos = &(*iter);
 			
-			bool islocal = this->networkInterface().intaddr().ip == pinfos->pIntAddr->ip ||
-					this->networkInterface().extaddr().ip == pinfos->pIntAddr->ip;
+			bool islocal = this->networkInterface().intTcpAddr().ip == pinfos->pIntAddr->ip ||
+					this->networkInterface().extTcpAddr().ip == pinfos->pIntAddr->ip;
 
 			bool usable = checkComponentUsable(pinfos, true, false);
 
@@ -424,7 +589,7 @@ void Machine::onQueryAllInterfaceInfos(Network::Channel* pChannel, int32 uid, st
 			{
 				if(islocal)
 				{
-					Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+					Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 					
 					MachineInterface::onBroadcastInterfaceArgs25::staticAddToBundle((*pBundle), pinfos->uid, 
 						pinfos->username, findComponentType, pinfos->cid, pinfos->cid, pinfos->globalOrderid, pinfos->groupOrderid, pinfos->gus,
@@ -453,6 +618,7 @@ void Machine::onQueryAllInterfaceInfos(Network::Channel* pChannel, int32 uid, st
 					pinfos->cid,
 					COMPONENT_NAME_EX(pinfos->componentType)));
 
+				removeComponentID(pinfos->componentType, pinfos->cid, uid);
 				iter = components.erase(iter);
 
 				if(islocal)
@@ -682,10 +848,10 @@ void Machine::startserver(Network::Channel* pChannel, KBEngine::MemoryStream& s)
 	int32 uid = 0;
 	COMPONENT_TYPE componentType;
 	uint64 cid = 0;
-	int16 gus = 0;
+	uint16 gus = 0;
 	std::string KBE_ROOT, KBE_RES_PATH, KBE_BIN_PATH;
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	bool success = true;
 
 	uint16 finderRecvPort = 0;
@@ -820,10 +986,10 @@ void Machine::stopserver(Network::Channel* pChannel, KBEngine::MemoryStream& s)
 		
 			if(!usable)
 			{
+				removeComponentID(componentType, (*iter).cid, uid);
 				iter = components.erase(iter);
 				continue;
 			}
-
 
 			Network::Bundle closebundle;
 			if(componentType != BOTS_TYPE)
@@ -899,6 +1065,11 @@ void Machine::stopserver(Network::Channel* pChannel, KBEngine::MemoryStream& s)
 			}
 
 			recvpacket >> success;
+			if (success)
+			{
+				removeComponentID(componentType, (*iter).cid, uid);
+			}
+			
 			iter++;
 		}
 	}
@@ -908,7 +1079,7 @@ void Machine::stopserver(Network::Channel* pChannel, KBEngine::MemoryStream& s)
 			uid,  COMPONENT_NAME_EX(componentType), pChannel->c_str()));
 	}
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle) << success;
 
 	if(finderRecvPort != 0)
@@ -1020,6 +1191,7 @@ void Machine::killserver(Network::Channel* pChannel, KBEngine::MemoryStream& s)
 
 				if (!usable)
 				{
+					removeComponentID(componentType, (*iter).cid, uid);
 					iter = components.erase(iter);
 					killed = true;
 					break;
@@ -1041,7 +1213,7 @@ void Machine::killserver(Network::Channel* pChannel, KBEngine::MemoryStream& s)
 			uid, COMPONENT_NAME_EX(componentType), pChannel->c_str()));
 	}
 
-	Network::Bundle* pBundle = Network::Bundle::createPoolObject();
+	Network::Bundle* pBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
 	(*pBundle) << success;
 
 	if (finderRecvPort != 0)
@@ -1094,7 +1266,7 @@ void Machine::onSignalled(int sigNum)
 
 //-------------------------------------------------------------------------------------
 #if KBE_PLATFORM != PLATFORM_WIN32
-uint16 Machine::startLinuxProcess(int32 uid, COMPONENT_TYPE componentType, uint64 cid, int16 gus, 
+uint16 Machine::startLinuxProcess(int32 uid, COMPONENT_TYPE componentType, uint64 cid, uint16 gus, 
 	std::string& KBE_ROOT, std::string& KBE_RES_PATH, std::string& KBE_BIN_PATH)
 {
 	uint16 childpid;
@@ -1171,7 +1343,7 @@ uint16 Machine::startLinuxProcess(int32 uid, COMPONENT_TYPE componentType, uint6
 
 #else
 
-DWORD Machine::startWindowsProcess(int32 uid, COMPONENT_TYPE componentType, uint64 cid, int16 gus,
+DWORD Machine::startWindowsProcess(int32 uid, COMPONENT_TYPE componentType, uint64 cid, uint16 gus,
 	std::string& KBE_ROOT, std::string& KBE_RES_PATH, std::string& KBE_BIN_PATH)
 {
 	STARTUPINFO si;

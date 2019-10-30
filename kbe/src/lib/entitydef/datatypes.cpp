@@ -1,22 +1,4 @@
-/*
-This source file is part of KBEngine
-For the latest info, see http://www.kbengine.org/
-
-Copyright (c) 2008-2018 KBEngine.
-
-KBEngine is free software: you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-KBEngine is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
- 
-You should have received a copy of the GNU Lesser General Public License
-along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Copyright 2008-2018 Yolo Technologies, Inc. All Rights Reserved. https://www.comblockengine.com
 
 
 #include "datatypes.h"
@@ -28,6 +10,8 @@ DataTypes::DATATYPE_MAP DataTypes::dataTypes_;
 DataTypes::DATATYPE_MAP DataTypes::dataTypesLowerName_;
 DataTypes::UID_DATATYPE_MAP DataTypes::uid_dataTypes_;
 DataTypes::DATATYPE_ORDERS DataTypes::dataTypesOrders_;
+
+static uint8 _g_baseTypeEndIndex = 0;
 
 //-------------------------------------------------------------------------------------
 DataTypes::DataTypes()
@@ -50,6 +34,19 @@ void DataTypes::finalise(void)
 	uid_dataTypes_.clear();
 	dataTypesLowerName_.clear();
 	dataTypes_.clear();
+	dataTypesOrders_.clear();
+
+	_g_baseTypeEndIndex = 0;
+}
+
+//-------------------------------------------------------------------------------------
+bool DataTypes::validTypeName(const std::string& typeName)
+{
+	// 不允许前面加_, 因为内部产生的一些临时结构前面使用了_, 避免误判
+	if (typeName.size() > 0 && typeName[0] == '_')
+		return false;
+
+	return true;
 }
 
 //-------------------------------------------------------------------------------------
@@ -80,19 +77,37 @@ bool DataTypes::initialize(std::string file)
 	addDataType("VECTOR2",		new Vector2Type);
 	addDataType("VECTOR3",		new Vector3Type);
 	addDataType("VECTOR4",		new Vector4Type);
+
+	_g_baseTypeEndIndex = dataTypesOrders_.size();
 	return loadTypes(file);
+}
+
+//-------------------------------------------------------------------------------------
+std::vector< std::string > DataTypes::getBaseTypeNames()
+{
+	std::vector< std::string > ret;
+	ret.assign(dataTypesOrders_.begin(), dataTypesOrders_.begin() + _g_baseTypeEndIndex);
+	return ret;
 }
 
 //-------------------------------------------------------------------------------------
 bool DataTypes::loadTypes(std::string& file)
 {
-	TiXmlNode* node = NULL;
-	SmartPointer<XML> xml(new XML(Resmgr::getSingleton().matchRes(file).c_str()));
+	// 允许纯脚本定义，则可能没有这个文件
+	if (access(file.c_str(), 0) != 0)
+		return true;
 
-	if(xml == NULL || !xml->isGood())
+	SmartPointer<XML> xml(new XML(Resmgr::getSingleton().matchRes(file).c_str()));
+	return loadTypes(xml);
+}
+
+//-------------------------------------------------------------------------------------
+bool DataTypes::loadTypes(SmartPointer<XML>& xml)
+{
+	if (xml == NULL || !xml->isGood())
 		return false;
 
-	node = xml->getRootNode();
+	TiXmlNode* node = xml->getRootNode();
 
 	if(node == NULL)
 	{
@@ -106,11 +121,11 @@ bool DataTypes::loadTypes(std::string& file)
 		std::string aliasName = xml->getKey(node);
 		TiXmlNode* childNode = node->FirstChild();
 
-		// 不允许前面加_, 因为内部产生的一些临时结构前面使用了_, 避免误判
-		if (aliasName[0] == '_')
+		if (!DataTypes::validTypeName(aliasName))
 		{
 			ERROR_MSG(fmt::format("DataTypes::loadTypes: Not allowed to use the prefix \"_\"! aliasName={}\n",
 				aliasName.c_str()));
+
 			return false;
 		}
 
@@ -244,24 +259,32 @@ void DataTypes::delDataType(std::string name)
 }
 
 //-------------------------------------------------------------------------------------
-DataType* DataTypes::getDataType(std::string name)
+DataType* DataTypes::getDataType(std::string name, bool notFoundOutError)
 {
 	DATATYPE_MAP::iterator iter = dataTypes_.find(name);
 	if (iter != dataTypes_.end()) 
 		return iter->second.get();
 
-	ERROR_MSG(fmt::format("DataTypes::getDataType:not found type {}.\n", name.c_str()));
+	if (notFoundOutError)
+	{
+		ERROR_MSG(fmt::format("DataTypes::getDataType:not found type {}.\n", name.c_str()));
+	}
+
 	return NULL;
 }
 
 //-------------------------------------------------------------------------------------
-DataType* DataTypes::getDataType(const char* name)
+DataType* DataTypes::getDataType(const char* name, bool notFoundOutError)
 {
 	DATATYPE_MAP::iterator iter = dataTypes_.find(name);
 	if (iter != dataTypes_.end()) 
 		return iter->second.get();
 
-	ERROR_MSG(fmt::format("DataTypes::getDataType:not found type {}.\n", name));
+	if (notFoundOutError)
+	{
+		ERROR_MSG(fmt::format("DataTypes::getDataType:not found type {}.\n", name));
+	}
+
 	return NULL;
 }
 

@@ -1,34 +1,15 @@
-/*
-This source file is part of KBEngine
-For the latest info, see http://www.kbengine.org/
-
-Copyright (c) 2008-2018 KBEngine.
-
-KBEngine is free software: you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-KBEngine is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
- 
-You should have received a copy of the GNU Lesser General Public License
-along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Copyright 2008-2018 Yolo Technologies, Inc. All Rights Reserved. https://www.comblockengine.com
 
 #ifndef KBE_ENTITY_H
 #define KBE_ENTITY_H
 	
-// common include
-//#include "entitymovecontroller.h"
 #include "profile.h"
 #include "common/timer.h"
 #include "common/common.h"
 #include "common/smartpointer.h"
 #include "helper/debug_helper.h"
 #include "entitydef/entity_call.h"
+#include "entitydef/entity_component.h"
 #include "pyscript/math.h"
 #include "pyscript/scriptobject.h"
 #include "entitydef/datatypes.h"	
@@ -36,19 +17,13 @@ along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
 #include "entitydef/scriptdef_module.h"
 #include "entitydef/entity_macro.h"	
 #include "server/script_timers.h"	
-
-//#define NDEBUG
-// windows include	
-#if KBE_PLATFORM == PLATFORM_WIN32
-#else
-// linux include
-#endif
 	
 namespace KBEngine{
 
 class Chunk;
 class Entity;
 class EntityCall;
+class EntityComponent;
 class Cellapp;
 class Witness;
 class AllClients;
@@ -56,7 +31,7 @@ class CoordinateSystem;
 class EntityCoordinateNode;
 class Controller;
 class Controllers;
-class Space;
+class SpaceMemory;
 class VolatileInfo;
 
 namespace Network
@@ -75,7 +50,8 @@ class Entity : public script::ScriptObject
 	ENTITY_HEADER(Entity)
 
 public:
-	Entity(ENTITY_ID id, const ScriptDefModule* pScriptModule);
+	Entity(ENTITY_ID id, const ScriptDefModule* pScriptModule,
+		PyTypeObject* pyType = getScriptType(), bool isInitialised = true);
 	~Entity();
 	
 	/** 
@@ -119,7 +95,7 @@ public:
 	/** 
 		定义属性数据被改变了 
 	*/
-	void onDefDataChanged(const PropertyDescription* propertyDescription, 
+	void onDefDataChanged(EntityComponent* pEntityComponent, const PropertyDescription* propertyDescription,
 			PyObject* pyData);
 	
 	/** 
@@ -130,15 +106,15 @@ public:
 
 public:
 	/** 
-		entitycall section
+		entityCall section
 	*/
 	INLINE EntityCall* baseEntityCall() const;
 	DECLARE_PY_GET_MOTHOD(pyGetBaseEntityCall);
-	INLINE void baseEntityCall(EntityCall* entitycall);
+	INLINE void baseEntityCall(EntityCall* entityCall);
 	
 	INLINE EntityCall* clientEntityCall() const;
 	DECLARE_PY_GET_MOTHOD(pyGetClientEntityCall);
-	INLINE void clientEntityCall(EntityCall* entitycall);
+	INLINE void clientEntityCall(EntityCall* entityCall);
 
 	/**
 		all_clients
@@ -221,14 +197,6 @@ public:
 	*/
 	void setPosition_XYZ_float(Network::Channel* pChannel, float x, float y, float z);
 
-	/** 网络接口
-		entity传送
-		@cellAppID: 要传送到的目的cellappID
-		@targetEntityID：要传送到这个entity的space中
-		@sourceBaseAppID: 有可能是由某个baseapp上的entity请求teleport的， 如果为0则为cellEntity发起
-	*/
-	void teleportFromBaseapp(Network::Channel* pChannel, COMPONENT_ID cellAppID, ENTITY_ID targetEntityID, COMPONENT_ID sourceBaseAppID);
-
 	/**
 		cell上的传送方法
 	*/
@@ -259,8 +227,8 @@ public:
 	/**
 		进入离开space等回调
 	*/
-	void onEnterSpace(Space* pSpace);
-	void onLeaveSpace(Space* pSpace);
+	void onEnterSpace(SpaceMemory* pSpace);
+	void onLeaveSpace(SpaceMemory* pSpace);
 
 	/** 
 		当cellapp意外终止后， baseapp如果能找到合适的cellapp则将其恢复后
@@ -283,6 +251,11 @@ public:
 	DECLARE_PY_MOTHOD_ARG2(pySetViewRadius, float, float);
 	DECLARE_PY_MOTHOD_ARG0(pyGetViewRadius);
 	DECLARE_PY_MOTHOD_ARG0(pyGetViewHystArea);
+
+	/**
+		返回观察该实体的所有观察者
+	*/
+	DECLARE_PY_MOTHOD_ARG0(pyGetWitnesses);
 
 	/** 
 		当前entity是否为real 
@@ -336,9 +309,9 @@ public:
 		entity移动到某个entity 
 	*/
 	uint32 moveToEntity(ENTITY_ID targetID, float velocity, float distance,
-			PyObject* userData, bool faceMovement, bool moveVertically);
+			PyObject* userData, bool faceMovement, bool moveVertically, const Position3D& offsetPos);
 	
-	DECLARE_PY_MOTHOD_ARG6(pyMoveToEntity, int32, float, float, PyObject_ptr, int32, int32);
+	static PyObject* __py_pyMoveToEntity(PyObject* self, PyObject* args);
 
 	/**
 	entity移动加速
@@ -368,7 +341,8 @@ public:
 	/** 
 		脚本请求获得View范围内的entities 
 	*/
-	DECLARE_PY_MOTHOD_ARG0(pyEntitiesInView);
+	static PyObject* __py_pyEntitiesInView(PyObject* self, PyObject* args);
+	PyObject* entitiesInView(bool pending);
 
 	/**
 		设置获取是否自动备份
@@ -382,7 +356,8 @@ public:
 	*/
 	void onRemoteMethodCall(Network::Channel* pChannel, MemoryStream& s);
 	void onRemoteCallMethodFromClient(Network::Channel* pChannel, ENTITY_ID srcEntityID, MemoryStream& s);
-	void onRemoteMethodCall_(MethodDescription* pMethodDescription, ENTITY_ID srcEntityID, MemoryStream& s);
+	void onRemoteMethodCall_(PropertyDescription* pComponentPropertyDescription, 
+		MethodDescription* pMethodDescription, ENTITY_ID srcEntityID, MemoryStream& s);
 
 	/**
 		观察者
@@ -447,7 +422,7 @@ public:
 	DECLARE_PY_MOTHOD_ARG3(pyAddProximity, float, float, int32);
 
 	/** 
-		添加一个范围触发器  
+		调用客户端实体的方法  
 	*/
 	DECLARE_PY_MOTHOD_ARG1(pyClientEntity, ENTITY_ID);
 
@@ -585,6 +560,9 @@ public:
 	void addMovementHandlerToStream(KBEngine::MemoryStream& s);
 	void createMovementHandlerFromStream(KBEngine::MemoryStream& s);
 	
+	void addEventsToStream(KBEngine::MemoryStream& s);
+	void createEventsFromStream(KBEngine::MemoryStream& s);
+
 	/** 
 		获得实体控制器管理器
 	*/
@@ -593,7 +571,7 @@ public:
 	/** 
 		设置实体持久化数据是否已脏，脏了会自动存档 
 	*/
-	INLINE void setDirty(bool dirty = true);
+	INLINE void setDirty(uint32* digest = NULL);
 	INLINE bool isDirty() const;
 	
 	/**
@@ -610,7 +588,7 @@ public:
 
 private:
 	/** 
-		发送teleport结果到baseEntity端
+		发送teleport结果到base端
 	*/
 	void _sendBaseTeleportResult(ENTITY_ID sourceEntityID, COMPONENT_ID sourceBaseAppID, 
 		SPACE_ID spaceID, SPACE_ID lastSpaceID, bool fromCellTeleport);
@@ -622,6 +600,7 @@ private:
 		PyObject *		pyCallable;
 		// 可以为NULL， NULL说明没有参数
 		PyObject *		pyFuncArgs;
+		const char*		funcName;
 	};
 
 	typedef std::list<BufferedScriptCall*>					BufferedScriptCallArray;
@@ -630,10 +609,10 @@ private:
 	static int32											_scriptCallbacksBufferCount;
 
 protected:
-	// 这个entity的客户端部分的entitycall
+	// 这个entity的客户端部分的entityCall
 	EntityCall*												clientEntityCall_;
 
-	// 这个entity的baseapp部分的entitycall
+	// 这个entity的baseapp部分的entityCall
 	EntityCall*												baseEntityCall_;
 
 	/** 这个entity的坐标和朝向当前受谁的客户端控制
@@ -700,8 +679,8 @@ protected:
 	// 在脚本层做搜索的时候可以按层搜索.
 	int8													layer_;
 	
-	// 需要持久化的数据是否变脏，如果没有变脏不需要持久化
-	bool													isDirty_;
+	// 需要持久化的数据是否变脏（内存sha1），如果没有变脏不需要持久化
+	uint32													persistentDigest_[5];
 
 	// 如果用户有设置过Volatileinfo，则此处创建Volatileinfo，否则为NULL使用ScriptDefModule的Volatileinfo
 	VolatileInfo*											pCustomVolatileinfo_;

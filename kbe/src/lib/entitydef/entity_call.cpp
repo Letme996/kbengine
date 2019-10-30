@@ -1,25 +1,8 @@
-/*
-This source file is part of KBEngine
-For the latest info, see http://www.kbengine.org/
-
-Copyright (c) 2008-2018 KBEngine.
-
-KBEngine is free software: you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-KBEngine is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
- 
-You should have received a copy of the GNU Lesser General Public License
-along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
-*/
+// Copyright 2008-2018 Yolo Technologies, Inc. All Rights Reserved. https://www.comblockengine.com
 
 
 #include "entity_call.h"
+#include "entity_component_call.h"
 #include "scriptdef_module.h"
 #include "helper/debug_helper.h"
 #include "network/channel.h"	
@@ -31,14 +14,10 @@ along with KBEngine.  If not, see <http://www.gnu.org/licenses/>.
 
 namespace KBEngine
 {
-
-// 获得某个entity的函数地址
-EntityCall::GetEntityFunc EntityCall::__getEntityFunc;
-EntityCall::FindChannelFunc EntityCall::__findChannelFunc;
-EntityCall::EntityCallCallHookFunc*	EntityCall::__hookCallFuncPtr = NULL;
 EntityCall::ENTITYCALLS EntityCall::entityCalls;
 
 SCRIPT_METHOD_DECLARE_BEGIN(EntityCall)
+SCRIPT_METHOD_DECLARE("getComponent",		pyGetComponent,		METH_VARARGS,		0)
 SCRIPT_METHOD_DECLARE_END()
 
 SCRIPT_MEMBER_DECLARE_BEGIN(EntityCall)
@@ -102,9 +81,7 @@ RemoteEntityMethod* EntityCall::createRemoteMethod(MethodDescription* pMethodDes
 //-------------------------------------------------------------------------------------
 PyObject* EntityCall::onScriptGetAttribute(PyObject* attr)
 {
-	wchar_t* PyUnicode_AsWideCharStringRet0 = PyUnicode_AsWideCharString(attr, NULL);
-	char* ccattr = strutil::wchar2char(PyUnicode_AsWideCharStringRet0);
-	PyMem_Free(PyUnicode_AsWideCharStringRet0);
+	const char* ccattr = PyUnicode_AsUTF8AndSize(attr, NULL);
 
 	MethodDescription* pMethodDescription = NULL;
 
@@ -137,8 +114,6 @@ PyObject* EntityCall::onScriptGetAttribute(PyObject* attr)
 	
 	if(pMethodDescription != NULL)
 	{
-		free(ccattr);
-
 		if(g_componentType == CLIENT_TYPE || g_componentType == BOTS_TYPE)
 		{
 			if(!pMethodDescription->isExposed())
@@ -146,6 +121,15 @@ PyObject* EntityCall::onScriptGetAttribute(PyObject* attr)
 		}
 
 		return createRemoteMethod(pMethodDescription);
+	}
+	else
+	{
+		// 是否是组件方法调用
+		PropertyDescription* pComponentPropertyDescription = pScriptModule_->findComponentPropertyDescription(ccattr);
+		if (pComponentPropertyDescription)
+		{
+			return new EntityComponentCall(this, pComponentPropertyDescription);
+		}
 	}
 
 	// 首先要求名称不能为自己  比如：自身是一个cell， 不能使用cell.cell
@@ -177,8 +161,6 @@ PyObject* EntityCall::onScriptGetAttribute(PyObject* attr)
 		
 		if(mbtype != -1)
 		{
-			free(ccattr);
-
 			if(g_componentType != CLIENT_TYPE && g_componentType != BOTS_TYPE)
 			{
 				return new EntityCall(pScriptModule_, &addr_, componentID_, 
@@ -191,8 +173,7 @@ PyObject* EntityCall::onScriptGetAttribute(PyObject* attr)
 			}
 		}
 	}
-	
-	free(ccattr);
+
 	return ScriptObject::onScriptGetAttribute(attr);
 }
 
@@ -231,12 +212,6 @@ PyObject* EntityCall::tp_str()
 }
 
 //-------------------------------------------------------------------------------------
-PyObject* EntityCall::tryGetEntity(COMPONENT_ID componentID, ENTITY_ID entityID)
-{
-	return __getEntityFunc(componentID, entityID);
-}
-
-//-------------------------------------------------------------------------------------
 PyObject* EntityCall::__unpickle__(PyObject* self, PyObject* args)
 {
 	ENTITY_ID eid = 0;
@@ -247,13 +222,13 @@ PyObject* EntityCall::__unpickle__(PyObject* self, PyObject* args)
 	Py_ssize_t size = PyTuple_Size(args);
 	if(size != 4)
 	{
-		ERROR_MSG("EntityCall::__unpickle__: args is error! size != 4.\n");
+		ERROR_MSG("EntityCall::__unpickle__: args error! size != 4.\n");
 		S_Return;
 	}
 
 	if(!PyArg_ParseTuple(args, "iKHh", &eid, &componentID, &utype, &type))
 	{
-		ERROR_MSG("EntityCall::__unpickle__: args is error!\n");
+		ERROR_MSG("EntityCall::__unpickle__: args error!\n");
 		S_Return;
 	}
 
@@ -266,7 +241,7 @@ PyObject* EntityCall::__unpickle__(PyObject* self, PyObject* args)
 
 	// COMPONENT_TYPE componentType = ENTITYCALL_COMPONENT_TYPE_MAPPING[(ENTITYCALL_TYPE)type];
 	
-	PyObject* entity = tryGetEntity(componentID, eid);
+	PyObject* entity = EntityDef::tryGetEntity(componentID, eid);
 	if(entity != NULL)
 	{
 		Py_INCREF(entity);
@@ -289,19 +264,106 @@ void EntityCall::onInstallScript(PyObject* mod)
 }
 
 //-------------------------------------------------------------------------------------
-Network::Channel* EntityCall::getChannel(void)
-{
-	if(__findChannelFunc == NULL)
-		return NULL;
-
-	return __findChannelFunc(*this);
-}
-
-//-------------------------------------------------------------------------------------
 void EntityCall::reload()
-{
+{ 
 	pScriptModule_ = EntityDef::findScriptModule(scriptModuleName_.c_str());
 }
 
+//-------------------------------------------------------------------------------------
+void EntityCall::newCall(Network::Bundle& bundle)
+{
+	newCall_(bundle);
+
+	if (isClient() && pScriptModule_->usePropertyDescrAlias())
+		bundle << (uint8)0;
+	else
+		bundle << (ENTITY_PROPERTY_UID)0;
+}
+
+//-------------------------------------------------------------------------------------
+PyObject* EntityCall::pyGetComponent(const std::string& componentName, bool all)
+{
+	std::vector<EntityComponentCall*> founds =
+		EntityComponentCall::getComponents(componentName, this, pScriptModule_);
+
+	if (!all)
+	{
+		if (founds.size() > 0)
+			return founds[0];
+
+		Py_RETURN_NONE;
+	}
+	else
+	{
+		PyObject* pyObj = PyTuple_New(founds.size());
+
+		for (int i = 0; i < (int)founds.size(); ++i)
+		{
+			PyTuple_SetItem(pyObj, i, founds[i]);
+		}
+
+		return pyObj;
+	}
+
+	return NULL;
+}
+
+//-------------------------------------------------------------------------------------
+PyObject* EntityCall::__py_pyGetComponent(PyObject* self, PyObject* args)
+{
+	uint16 currargsSize = (uint16)PyTuple_Size(args);
+	EntityCall* pobj = static_cast<EntityCall*>(self);
+
+	if (currargsSize == 0 || currargsSize > 2)
+	{
+		PyErr_Format(PyExc_AssertionError,
+			"EntityCall::getComponent: args require 1-2 args, gived %d!\n",
+			currargsSize);
+
+		PyErr_PrintEx(0);
+		Py_RETURN_NONE;
+	}
+
+	char* componentName = NULL;
+	if (currargsSize == 1)
+	{
+		if (PyArg_ParseTuple(args, "s", &componentName) == -1)
+		{
+			PyErr_Format(PyExc_AssertionError, "EntityCall::getComponent:: args error!");
+			PyErr_PrintEx(0);
+			Py_RETURN_NONE;
+		}
+
+		if (!componentName)
+		{
+			PyErr_Format(PyExc_AssertionError, "EntityCall::getComponent:: componentName error!");
+			PyErr_PrintEx(0);
+			Py_RETURN_NONE;
+		}
+
+		return pobj->pyGetComponent(componentName, false);
+	}
+	else if (currargsSize == 2)
+	{
+		PyObject* pyobj = NULL;
+		if (PyArg_ParseTuple(args, "sO", &componentName, &pyobj) == -1)
+		{
+			PyErr_Format(PyExc_AssertionError, "EntityCall::getComponent:: args error!");
+			PyErr_PrintEx(0);
+			Py_RETURN_NONE;
+		}
+
+		if (!componentName)
+		{
+			PyErr_Format(PyExc_AssertionError, "EntityCall::getComponent:: componentName error!");
+			PyErr_PrintEx(0);
+			Py_RETURN_NONE;
+		}
+
+		return pobj->pyGetComponent(componentName, (pyobj == Py_True));
+	}
+
+	Py_RETURN_NONE;
+}
 //-------------------------------------------------------------------------------------
 }
